@@ -1,0 +1,1528 @@
+from flask import Flask, request, jsonify, render_template_string
+
+app = Flask(__name__)
+
+# AI CROP YIELD PREDICTION SYSTEM
+
+CROP_DATA = {
+    "rice": {
+        "name": "Rice",
+        "temp": (22, 32),
+        "rainfall": (800, 2000),
+        "moisture": (55, 85),
+        "base_yield": 4.0,
+        "water": "High",
+        "fertilizer": "High"
+    },
+    "wheat": {
+        "name": "Wheat",
+        "temp": (15, 25),
+        "rainfall": (400, 1000),
+        "moisture": (40, 70),
+        "base_yield": 3.5,
+        "water": "Medium",
+        "fertilizer": "Medium"
+    },
+    "maize": {
+        "name": "Maize",
+        "temp": (18, 30),
+        "rainfall": (500, 1200),
+        "moisture": (45, 75),
+        "base_yield": 4.5,
+        "water": "Medium",
+        "fertilizer": "High"
+    },
+    "potato": {
+        "name": "Potato",
+        "temp": (15, 25),
+        "rainfall": (500, 800),
+        "moisture": (50, 80),
+        "base_yield": 20.0,
+        "water": "Medium",
+        "fertilizer": "Medium"
+    },
+    "sugarcane": {
+        "name": "Sugarcane",
+        "temp": (20, 35),
+        "rainfall": (1000, 2500),
+        "moisture": (60, 90),
+        "base_yield": 70.0,
+        "water": "High",
+        "fertilizer": "High"
+    }
+}
+
+
+
+# RULE-BASED AI ENGINE
+
+def calculate_prediction(crop, soil, temperature, rainfall,
+                         moisture, fertilizer, irrigation, area):
+
+    data = CROP_DATA[crop]
+
+    score = 0
+    advice = []
+    risk_factors = []
+
+    # ---------------- Temperature ----------------
+    t_min, t_max = data["temp"]
+
+    if t_min <= temperature <= t_max:
+        score += 20
+    elif abs(temperature - t_min) <= 5 or abs(temperature - t_max) <= 5:
+        score += 10
+        risk_factors.append("Temperature is slightly outside ideal range.")
+        advice.append("Monitor temperature and protect the crop if required.")
+    else:
+        risk_factors.append("Temperature is not suitable for this crop.")
+        advice.append("Try to maintain the recommended temperature conditions.")
+
+    # ---------------- Rainfall ----------------
+    r_min, r_max = data["rainfall"]
+
+    if r_min <= rainfall <= r_max:
+        score += 20
+    elif rainfall < r_min:
+        score += 8
+        risk_factors.append("Rainfall is below the recommended level.")
+        advice.append("Provide additional irrigation if soil becomes dry.")
+    elif rainfall > r_max:
+        score += 8
+        risk_factors.append("Rainfall is higher than the recommended level.")
+        advice.append("Ensure proper drainage to avoid waterlogging.")
+
+    # ---------------- Soil Moisture ----------------
+    m_min, m_max = data["moisture"]
+
+    if m_min <= moisture <= m_max:
+        score += 20
+    elif abs(moisture - m_min) <= 10 or abs(moisture - m_max) <= 10:
+        score += 10
+        risk_factors.append("Soil moisture is near the limit.")
+    else:
+        score += 5
+        risk_factors.append("Soil moisture is unsuitable.")
+        advice.append("Adjust irrigation according to soil moisture.")
+
+    # ---------------- Soil Type ----------------
+    if soil.lower() == "loamy":
+        score += 15
+    elif soil.lower() in ["clay", "sandy"]:
+        score += 10
+    else:
+        score += 7
+
+    # ---------------- Fertilizer ----------------
+    if fertilizer.lower() == data["fertilizer"].lower():
+        score += 10
+    elif fertilizer.lower() == "medium":
+        score += 7
+    else:
+        score += 5
+
+    if fertilizer.lower() == "low":
+        advice.append("Consider improving fertilizer/nutrient management.")
+        risk_factors.append("Fertilizer level is low.")
+
+    # ---------------- Irrigation ----------------
+    required_water = data["water"].lower()
+
+    if irrigation.lower() == required_water:
+        score += 15
+    elif irrigation.lower() == "medium":
+        score += 10
+    else:
+        score += 6
+
+    # Irrigation advice
+    if irrigation.lower() == "low":
+        advice.append("Increase irrigation frequency if moisture is low.")
+    elif irrigation.lower() == "high" and required_water != "high":
+        advice.append("Avoid excessive irrigation and waterlogging.")
+
+    # ---------------- Final score ----------------
+    score = min(score, 100)
+
+    if score >= 80:
+        level = "Excellent"
+        condition = "Very Good"
+        risk = "Low"
+        multiplier = 1.10
+    elif score >= 65:
+        level = "Good"
+        condition = "Good"
+        risk = "Low to Medium"
+        multiplier = 0.95
+    elif score >= 50:
+        level = "Average"
+        condition = "Moderate"
+        risk = "Medium"
+        multiplier = 0.80
+    else:
+        level = "Low"
+        condition = "Needs Improvement"
+        risk = "High"
+        multiplier = 0.60
+
+    estimated_yield = round(data["base_yield"] * multiplier, 2)
+    total_production = round(estimated_yield * area, 2)
+
+    # AI Confidence
+    confidence = min(95, max(55, score + 5))
+
+    # Smart farming advice
+    if not advice:
+        advice.append("Current farm conditions are suitable.")
+        advice.append("Continue monitoring soil moisture and weather.")
+        advice.append("Use balanced fertilizer according to crop requirements.")
+
+    # Soil-specific advice
+    if soil.lower() == "sandy":
+        advice.append("Sandy soil may require more frequent irrigation.")
+    elif soil.lower() == "clay":
+        advice.append("Clay soil needs proper drainage.")
+    elif soil.lower() == "loamy":
+        advice.append("Loamy soil is generally favorable for crop growth.")
+
+    return {
+        "crop": data["name"],
+        "yield_level": level,
+        "estimated_yield": estimated_yield,
+        "total_production": total_production,
+        "confidence": confidence,
+        "score": score,
+        "condition": condition,
+        "risk": risk,
+        "risk_factors": risk_factors,
+        "advice": advice
+    }
+
+
+# FRONTEND
+
+HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>AI Crop Yield Prediction</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg, #e8f5e9, #f1f8e9);
+    color: #1b4332;
+    min-height: 100vh;
+}
+
+header {
+    background: linear-gradient(135deg, #1b5e20, #2e7d32);
+    color: white;
+    padding: 25px;
+    text-align: center;
+}
+
+header h1 {
+    font-size: 32px;
+    margin-bottom: 8px;
+}
+
+header p {
+    font-size: 16px;
+}
+
+.container {
+    width: 92%;
+    max-width: 1200px;
+    margin: 25px auto;
+}
+
+.card {
+    background: white;
+    border-radius: 18px;
+    padding: 25px;
+    margin-bottom: 22px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.10);
+}
+
+.card h2 {
+    margin-bottom: 20px;
+    color: #1b5e20;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    font-weight: bold;
+    margin-bottom: 7px;
+}
+
+input, select {
+    padding: 12px;
+    border: 1px solid #b7c9b8;
+    border-radius: 10px;
+    font-size: 15px;
+    outline: none;
+}
+
+input:focus, select:focus {
+    border-color: #2e7d32;
+}
+
+button {
+    border: none;
+    border-radius: 10px;
+    padding: 13px 18px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    margin: 7px 4px 0 0;
+}
+
+.primary {
+    background: #2e7d32;
+    color: white;
+}
+
+.primary:hover {
+    background: #1b5e20;
+}
+
+.voice {
+    background: #6a1b9a;
+    color: white;
+}
+
+.speak {
+    background: #1565c0;
+    color: white;
+}
+
+.download {
+    background: #ef6c00;
+    color: white;
+}
+
+.compare {
+    background: #00838f;
+    color: white;
+}
+
+.reset {
+    background: #757575;
+    color: white;
+}
+
+.result-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 15px;
+}
+
+.result-box {
+    background: #f1f8e9;
+    padding: 20px;
+    border-radius: 14px;
+    text-align: center;
+}
+
+.result-box h3 {
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+
+.result-box p {
+    font-size: 25px;
+    font-weight: bold;
+    color: #1b5e20;
+}
+
+.good {
+    color: #2e7d32 !important;
+}
+
+.warning {
+    color: #ef6c00 !important;
+}
+
+.danger {
+    color: #c62828 !important;
+}
+
+.section-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+ul {
+    padding-left: 22px;
+}
+
+li {
+    margin-bottom: 8px;
+}
+
+#resultSection,
+#comparisonSection {
+    display: none;
+}
+
+.progress-container {
+    background: #ddd;
+    border-radius: 20px;
+    overflow: hidden;
+    height: 25px;
+    margin-top: 10px;
+}
+
+.progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #43a047;
+    color: white;
+    text-align: center;
+    line-height: 25px;
+    font-size: 13px;
+}
+
+.risk-box {
+    padding: 18px;
+    border-radius: 12px;
+    background: #fff3e0;
+    margin-top: 15px;
+}
+
+.tip {
+    background: #e8f5e9;
+    padding: 15px;
+    border-left: 5px solid #2e7d32;
+    margin-top: 10px;
+    border-radius: 5px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+th, td {
+    padding: 12px;
+    border: 1px solid #ddd;
+    text-align: center;
+}
+
+th {
+    background: #2e7d32;
+    color: white;
+}
+
+footer {
+    background: #1b4332;
+    color: white;
+    text-align: center;
+    padding: 20px;
+    margin-top: 30px;
+}
+
+.badge {
+    display: inline-block;
+    padding: 7px 12px;
+    border-radius: 20px;
+    background: #dcedc8;
+    font-weight: bold;
+}
+
+@media(max-width: 800px) {
+    .form-grid,
+    .section-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .result-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media(max-width: 500px) {
+    .result-grid {
+        grid-template-columns: 1fr;
+    }
+
+    header h1 {
+        font-size: 24px;
+    }
+}
+
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>🌾 AI Crop Yield Prediction</h1>
+    <p>Smart Farming Assistant using Rule-Based Artificial Intelligence</p>
+    <p>No Machine Learning Required</p>
+</header>
+
+
+<div class="container">
+
+<!-- LANGUAGE -->
+<div class="card">
+    <h2>🌐 Language / भाषा</h2>
+    <button class="primary" onclick="setLanguage('en')">English</button>
+    <button class="primary" onclick="setLanguage('hi')">हिन्दी</button>
+</div>
+
+
+<!-- INPUT -->
+<div class="card">
+
+<h2 id="inputTitle">🌱 Farm Information</h2>
+
+<div class="form-grid">
+
+<div class="form-group">
+<label>Crop</label>
+<select id="crop">
+    <option value="rice">Rice</option>
+    <option value="wheat">Wheat</option>
+    <option value="maize">Maize</option>
+    <option value="potato">Potato</option>
+    <option value="sugarcane">Sugarcane</option>
+</select>
+</div>
+
+<div class="form-group">
+<label>Soil Type</label>
+<select id="soil">
+    <option value="loamy">Loamy</option>
+    <option value="clay">Clay</option>
+    <option value="sandy">Sandy</option>
+</select>
+</div>
+
+<div class="form-group">
+<label>Temperature (°C)</label>
+<input type="number" id="temperature" value="28">
+</div>
+
+<div class="form-group">
+<label>Rainfall (mm)</label>
+<input type="number" id="rainfall" value="1000">
+</div>
+
+<div class="form-group">
+<label>Soil Moisture (%)</label>
+<input type="number" id="moisture" value="65">
+</div>
+
+<div class="form-group">
+<label>Fertilizer Level</label>
+<select id="fertilizer">
+    <option value="low">Low</option>
+    <option value="medium" selected>Medium</option>
+    <option value="high">High</option>
+</select>
+</div>
+
+<div class="form-group">
+<label>Irrigation Level</label>
+<select id="irrigation">
+    <option value="low">Low</option>
+    <option value="medium" selected>Medium</option>
+    <option value="high">High</option>
+</select>
+</div>
+
+<div class="form-group">
+<label>Farm Area (Hectare)</label>
+<input type="number" id="area" value="1" step="0.1">
+</div>
+
+</div>
+
+
+<div style="margin-top:20px;">
+
+<button class="primary" onclick="predict()">
+    🔮 Predict Crop Yield
+</button>
+
+<button class="voice" onclick="startVoice()">
+    🎤 Speak Farm Information
+</button>
+
+<button class="reset" onclick="resetForm()">
+    🔄 Reset
+</button>
+
+</div>
+
+<p id="voiceStatus" style="margin-top:15px;font-weight:bold;"></p>
+
+</div>
+
+
+<!-- RESULT -->
+<div class="card" id="resultSection">
+
+<h2>🤖 AI Prediction Result</h2>
+
+<div class="result-grid">
+
+<div class="result-box">
+<h3>Crop</h3>
+<p id="resultCrop">-</p>
+</div>
+
+<div class="result-box">
+<h3>Yield Level</h3>
+<p id="resultLevel">-</p>
+</div>
+
+<div class="result-box">
+<h3>Yield / Hectare</h3>
+<p id="resultYield">-</p>
+</div>
+
+<div class="result-box">
+<h3>Total Production</h3>
+<p id="resultProduction">-</p>
+</div>
+
+<div class="result-box">
+<h3>AI Confidence</h3>
+<p id="resultConfidence">-</p>
+</div>
+
+<div class="result-box">
+<h3>Farm Condition</h3>
+<p id="resultCondition">-</p>
+</div>
+
+<div class="result-box">
+<h3>Risk Level</h3>
+<p id="resultRisk">-</p>
+</div>
+
+<div class="result-box">
+<h3>AI Score</h3>
+<p id="resultScore">-</p>
+</div>
+
+</div>
+
+
+<div style="margin-top:20px;">
+<h3>AI Confidence</h3>
+<div class="progress-container">
+    <div class="progress-bar" id="confidenceBar">0%</div>
+</div>
+</div>
+
+
+<div class="section-grid" style="margin-top:25px;">
+
+<div>
+<h3>⚠️ Risk Factors</h3>
+<ul id="riskList"></ul>
+</div>
+
+<div>
+<h3>💡 Smart Farming Advice</h3>
+<ul id="adviceList"></ul>
+</div>
+
+</div>
+
+
+<div class="risk-box">
+<h3>💧 Smart Irrigation Recommendation</h3>
+<p id="irrigationAdvice"></p>
+</div>
+
+
+<div class="risk-box">
+<h3>🧪 Fertilizer Recommendation</h3>
+<p id="fertilizerAdvice"></p>
+</div>
+
+
+<div style="margin-top:20px;">
+
+<button class="speak" onclick="speakResult()">
+🔊 Speak AI Result
+</button>
+
+<button class="download" onclick="downloadReport()">
+📄 Download Report
+</button>
+
+</div>
+
+</div>
+
+
+<!-- CROP COMPARISON -->
+<div class="card">
+
+<h2>🌾 Crop Comparison</h2>
+
+<p>
+Compare all supported crops using the same farm conditions.
+</p>
+
+<button class="compare" onclick="compareCrops()">
+📊 Compare Crops
+</button>
+
+</div>
+
+
+<div class="card" id="comparisonSection">
+
+<h2>📊 Crop Comparison Result</h2>
+
+<table>
+
+<thead>
+<tr>
+<th>Crop</th>
+<th>Yield Level</th>
+<th>Yield / Hectare</th>
+<th>AI Score</th>
+<th>Risk</th>
+</tr>
+</thead>
+
+<tbody id="comparisonBody"></tbody>
+
+</table>
+
+</div>
+
+
+<!-- SMART TIPS -->
+<div class="card">
+
+<h2>🌱 Smart Farming Tips</h2>
+
+<div class="tip">
+<b>💧 Irrigation:</b>
+Maintain soil moisture according to the selected crop.
+</div>
+
+<div class="tip">
+<b>🧪 Fertilizer:</b>
+Use balanced fertilizer and avoid unnecessary over-fertilization.
+</div>
+
+<div class="tip">
+<b>🌦️ Weather:</b>
+Monitor temperature and rainfall regularly.
+</div>
+
+<div class="tip">
+<b>🌾 Soil:</b>
+Maintain soil fertility and proper drainage.
+</div>
+
+<div class="tip">
+<b>🤖 AI:</b>
+This system uses predefined agricultural rules to provide recommendations.
+</div>
+
+</div>
+
+</div>
+
+
+<footer>
+    <p>AI Crop Yield Prediction & Smart Farming Assistant</p>
+    <p>Rule-Based Artificial Intelligence | BTech CSE College Project</p>
+</footer>
+
+
+<script>
+
+let currentLanguage = "en";
+let latestResult = null;
+
+
+// PREDICTION
+
+function getFormData() {
+
+    return {
+        crop: document.getElementById("crop").value,
+        soil: document.getElementById("soil").value,
+        temperature: Number(document.getElementById("temperature").value),
+        rainfall: Number(document.getElementById("rainfall").value),
+        moisture: Number(document.getElementById("moisture").value),
+        fertilizer: document.getElementById("fertilizer").value,
+        irrigation: document.getElementById("irrigation").value,
+        area: Number(document.getElementById("area").value)
+    };
+
+}
+
+
+async function predict() {
+
+    const data = getFormData();
+
+    if (
+        !data.temperature ||
+        !data.rainfall ||
+        !data.moisture ||
+        !data.area
+    ) {
+        alert("Please enter all required values.");
+        return;
+    }
+
+    try {
+
+        const response = await fetch("/predict", {
+
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json"
+            },
+
+            body: JSON.stringify(data)
+
+        });
+
+        const result = await response.json();
+
+        latestResult = result;
+
+        displayResult(result);
+
+    } catch(error) {
+
+        alert("Error connecting to AI server.");
+
+        console.log(error);
+
+    }
+
+}
+
+
+
+// DISPLAY RESULT
+
+function displayResult(result) {
+
+    document.getElementById("resultSection").style.display = "block";
+
+    document.getElementById("resultCrop").innerText =
+        result.crop;
+
+    document.getElementById("resultLevel").innerText =
+        result.yield_level;
+
+    document.getElementById("resultYield").innerText =
+        result.estimated_yield + " t/ha";
+
+    document.getElementById("resultProduction").innerText =
+        result.total_production + " tonnes";
+
+    document.getElementById("resultConfidence").innerText =
+        result.confidence + "%";
+
+    document.getElementById("resultCondition").innerText =
+        result.condition;
+
+    document.getElementById("resultRisk").innerText =
+        result.risk;
+
+    document.getElementById("resultScore").innerText =
+        result.score + "/100";
+
+
+    const bar = document.getElementById("confidenceBar");
+
+    bar.style.width = result.confidence + "%";
+
+    bar.innerText = result.confidence + "%";
+
+
+    // Risk list
+    const riskList = document.getElementById("riskList");
+
+    riskList.innerHTML = "";
+
+    if (result.risk_factors.length === 0) {
+
+        riskList.innerHTML =
+            "<li>No major risk detected.</li>";
+
+    } else {
+
+        result.risk_factors.forEach(function(item) {
+
+            const li = document.createElement("li");
+
+            li.innerText = item;
+
+            riskList.appendChild(li);
+
+        });
+
+    }
+
+
+    // Advice list
+    const adviceList = document.getElementById("adviceList");
+
+    adviceList.innerHTML = "";
+
+    result.advice.forEach(function(item) {
+
+        const li = document.createElement("li");
+
+        li.innerText = item;
+
+        adviceList.appendChild(li);
+
+    });
+
+
+    // Irrigation
+    const crop = document.getElementById("crop").value;
+
+    const moisture = Number(
+        document.getElementById("moisture").value
+    );
+
+    if (moisture < 40) {
+
+        document.getElementById("irrigationAdvice").innerText =
+            "Soil moisture is low. Irrigation should be increased.";
+
+    } else if (moisture > 80) {
+
+        document.getElementById("irrigationAdvice").innerText =
+            "Soil moisture is high. Reduce irrigation and ensure drainage.";
+
+    } else {
+
+        document.getElementById("irrigationAdvice").innerText =
+            "Soil moisture is within a reasonable range. Continue monitoring.";
+
+    }
+
+
+    // Fertilizer
+    const fertilizer =
+        document.getElementById("fertilizer").value;
+
+    if (fertilizer === "low") {
+
+        document.getElementById("fertilizerAdvice").innerText =
+            "Fertilizer level is low. Consider balanced nutrient management.";
+
+    } else if (fertilizer === "high") {
+
+        document.getElementById("fertilizerAdvice").innerText =
+            "Fertilizer level is high. Avoid excessive fertilizer application.";
+
+    } else {
+
+        document.getElementById("fertilizerAdvice").innerText =
+            "Medium fertilizer level detected. Maintain balanced application.";
+
+    }
+
+
+    document.getElementById("resultSection")
+        .scrollIntoView({behavior:"smooth"});
+
+}
+
+
+// VOICE INPUT
+
+function startVoice() {
+
+    const SpeechRecognition =
+        window.SpeechRecognition ||
+        window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+
+        alert(
+            "Voice recognition is not supported in this browser. Please use Google Chrome."
+        );
+
+        return;
+    }
+
+    const recognition = new SpeechRecognition();
+
+    recognition.lang = "en-IN";
+
+    recognition.continuous = false;
+
+    recognition.interimResults = false;
+
+
+    document.getElementById("voiceStatus").innerText =
+        "🎤 Listening... Please speak your farm information.";
+
+
+    recognition.start();
+
+
+    recognition.onresult = function(event) {
+
+        const text =
+            event.results[0][0].transcript.toLowerCase();
+
+        document.getElementById("voiceStatus").innerText =
+            "You said: " + text;
+
+        processVoiceCommand(text);
+
+    };
+
+
+    recognition.onerror = function(event) {
+
+        document.getElementById("voiceStatus").innerText =
+            "Voice error: " + event.error;
+
+    };
+
+
+    recognition.onend = function() {
+
+        console.log("Voice recognition ended.");
+
+    };
+
+}
+
+// VOICE COMMAND PARSER
+
+function processVoiceCommand(text) {
+
+    // Crop
+    if (text.includes("rice")) {
+        document.getElementById("crop").value = "rice";
+    }
+    else if (text.includes("wheat")) {
+        document.getElementById("crop").value = "wheat";
+    }
+    else if (text.includes("maize") || text.includes("corn")) {
+        document.getElementById("crop").value = "maize";
+    }
+    else if (text.includes("potato")) {
+        document.getElementById("crop").value = "potato";
+    }
+    else if (text.includes("sugarcane")) {
+        document.getElementById("crop").value = "sugarcane";
+    }
+
+
+    // Soil
+    if (text.includes("loamy")) {
+        document.getElementById("soil").value = "loamy";
+    }
+    else if (text.includes("clay")) {
+        document.getElementById("soil").value = "clay";
+    }
+    else if (text.includes("sandy")) {
+        document.getElementById("soil").value = "sandy";
+    }
+
+
+    // Fertilizer
+    if (text.includes("high fertilizer")) {
+        document.getElementById("fertilizer").value = "high";
+    }
+    else if (text.includes("low fertilizer")) {
+        document.getElementById("fertilizer").value = "low";
+    }
+    else if (text.includes("medium fertilizer")) {
+        document.getElementById("fertilizer").value = "medium";
+    }
+
+
+    // Irrigation
+    if (text.includes("high irrigation")) {
+        document.getElementById("irrigation").value = "high";
+    }
+    else if (text.includes("low irrigation")) {
+        document.getElementById("irrigation").value = "low";
+    }
+    else if (text.includes("medium irrigation")) {
+        document.getElementById("irrigation").value = "medium";
+    }
+
+
+    // Numbers
+    const numbers =
+        text.match(/-?\\d+(?:\\.\\d+)?/g);
+
+
+    if (numbers && numbers.length >= 1) {
+
+        document.getElementById("temperature").value =
+            numbers[0];
+
+    }
+
+    if (numbers && numbers.length >= 2) {
+
+        document.getElementById("rainfall").value =
+            numbers[1];
+
+    }
+
+    if (numbers && numbers.length >= 3) {
+
+        document.getElementById("moisture").value =
+            numbers[2];
+
+    }
+
+    if (numbers && numbers.length >= 4) {
+
+        document.getElementById("area").value =
+            numbers[3];
+
+    }
+
+
+    setTimeout(function() {
+
+        predict();
+
+    }, 700);
+
+}
+
+
+// VOICE OUTPUT
+
+function speakResult() {
+
+    if (!latestResult) {
+
+        alert("Please predict crop yield first.");
+
+        return;
+
+    }
+
+
+    if (!("speechSynthesis" in window)) {
+
+        alert("Voice output is not supported.");
+
+        return;
+
+    }
+
+
+    const r = latestResult;
+
+
+    const message =
+        "Crop is " + r.crop +
+        ". Yield level is " + r.yield_level +
+        ". Estimated yield is " + r.estimated_yield +
+        " tonnes per hectare. " +
+        "Total production is " + r.total_production +
+        " tonnes. " +
+        "AI confidence is " + r.confidence +
+        " percent. " +
+        "Risk level is " + r.risk +
+        ". " +
+        "Farm condition is " + r.condition + ".";
+
+
+    const speech =
+        new SpeechSynthesisUtterance(message);
+
+    speech.lang = "en-IN";
+
+    speech.rate = 0.9;
+
+    speech.pitch = 1;
+
+    window.speechSynthesis.cancel();
+
+    window.speechSynthesis.speak(speech);
+
+}
+
+
+
+// CROP COMPARISON
+
+async function compareCrops() {
+
+    const data = getFormData();
+
+    const crops =
+        ["rice", "wheat", "maize", "potato", "sugarcane"];
+
+    const results = [];
+
+
+    for (const crop of crops) {
+
+        const cropData = {
+            ...data,
+            crop: crop
+        };
+
+
+        const response = await fetch("/predict", {
+
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json"
+            },
+
+            body: JSON.stringify(cropData)
+
+        });
+
+
+        const result = await response.json();
+
+        results.push(result);
+
+    }
+
+
+    const body =
+        document.getElementById("comparisonBody");
+
+    body.innerHTML = "";
+
+
+    results.forEach(function(r) {
+
+        const row =
+            document.createElement("tr");
+
+
+        row.innerHTML =
+            "<td>" + r.crop + "</td>" +
+            "<td>" + r.yield_level + "</td>" +
+            "<td>" + r.estimated_yield + " t/ha</td>" +
+            "<td>" + r.score + "/100</td>" +
+            "<td>" + r.risk + "</td>";
+
+
+        body.appendChild(row);
+
+    });
+
+
+    document.getElementById("comparisonSection")
+        .style.display = "block";
+
+
+    document.getElementById("comparisonSection")
+        .scrollIntoView({behavior:"smooth"});
+
+}
+
+
+
+// DOWNLOAD REPORT
+
+function downloadReport() {
+
+    if (!latestResult) {
+
+        alert("Please predict crop yield first.");
+
+        return;
+
+    }
+
+
+    const r = latestResult;
+
+    const data = getFormData();
+
+
+    let report = "";
+
+    report += "========================================\\n";
+    report += "       AI CROP YIELD PREDICTION\\n";
+    report += "       SMART FARMING ASSISTANT\\n";
+    report += "========================================\\n\\n";
+
+    report += "PROJECT TYPE: Rule-Based Artificial Intelligence\\n";
+
+    report += "----------- FARM INFORMATION -----------\\n";
+
+    report += "Crop: " + r.crop + "\\n";
+    report += "Soil Type: " + data.soil + "\\n";
+    report += "Temperature: " + data.temperature + " °C\\n";
+    report += "Rainfall: " + data.rainfall + " mm\\n";
+    report += "Soil Moisture: " + data.moisture + " %\\n";
+    report += "Fertilizer: " + data.fertilizer + "\\n";
+    report += "Irrigation: " + data.irrigation + "\\n";
+    report += "Farm Area: " + data.area + " hectare\\n\\n";
+
+
+    report += "----------- AI RESULT -----------\\n";
+
+    report += "Yield Level: " + r.yield_level + "\\n";
+    report += "Estimated Yield: " +
+        r.estimated_yield + " tonnes/hectare\\n";
+
+    report += "Total Production: " +
+        r.total_production + " tonnes\\n";
+
+    report += "AI Confidence: " +
+        r.confidence + "%\\n";
+
+    report += "AI Score: " +
+        r.score + "/100\\n";
+
+    report += "Farm Condition: " +
+        r.condition + "\\n";
+
+    report += "Risk Level: " +
+        r.risk + "\\n\\n";
+
+
+    report += "----------- RISK FACTORS -----------\\n";
+
+    if (r.risk_factors.length === 0) {
+
+        report += "No major risk detected.\\n";
+
+    } else {
+
+        r.risk_factors.forEach(function(item) {
+
+            report += "- " + item + "\\n";
+
+        });
+
+    }
+
+
+    report += "\\n----------- SMART FARMING ADVICE -----------\\n";
+
+    r.advice.forEach(function(item) {
+
+        report += "- " + item + "\\n";
+
+    });
+
+
+    report += "\\n----------- END OF REPORT -----------\\n";
+
+
+    const blob =
+        new Blob([report], {type: "text/plain"});
+
+
+    const url =
+        URL.createObjectURL(blob);
+
+
+    const link =
+        document.createElement("a");
+
+
+    link.href = url;
+
+    link.download =
+        "AI_Crop_Yield_Report.txt";
+
+
+    link.click();
+
+
+    URL.revokeObjectURL(url);
+
+}
+
+
+// RESET
+
+function resetForm() {
+
+    document.getElementById("crop").value = "rice";
+
+    document.getElementById("soil").value = "loamy";
+
+    document.getElementById("temperature").value = 28;
+
+    document.getElementById("rainfall").value = 1000;
+
+    document.getElementById("moisture").value = 65;
+
+    document.getElementById("fertilizer").value = "medium";
+
+    document.getElementById("irrigation").value = "medium";
+
+    document.getElementById("area").value = 1;
+
+    document.getElementById("resultSection").style.display =
+        "none";
+
+    document.getElementById("comparisonSection").style.display =
+        "none";
+
+    document.getElementById("voiceStatus").innerText = "";
+
+    latestResult = null;
+
+}
+
+
+// LANGUAGE
+
+function setLanguage(language) {
+
+    currentLanguage = language;
+
+
+    if (language === "hi") {
+
+        document.getElementById("inputTitle").innerText =
+            "🌱 खेत की जानकारी";
+
+        alert(
+            "हिन्दी मोड चुना गया। कृपया खेत की जानकारी भरें और Predict पर क्लिक करें।"
+        );
+
+    } else {
+
+        document.getElementById("inputTitle").innerText =
+            "🌱 Farm Information";
+
+        alert(
+            "English mode selected."
+        );
+
+    }
+
+}
+
+</script>
+
+</body>
+</html>
+"""
+
+
+
+# FLASK ROUTES
+
+@app.route("/")
+def home():
+    return render_template_string(HTML)
+
+
+@app.route("/predict", methods=["POST"])
+def predict():
+
+    try:
+
+        data = request.get_json()
+
+        crop = data["crop"]
+        soil = data["soil"]
+
+        temperature = float(data["temperature"])
+        rainfall = float(data["rainfall"])
+        moisture = float(data["moisture"])
+
+        fertilizer = data["fertilizer"]
+        irrigation = data["irrigation"]
+
+        area = float(data["area"])
+
+
+        if crop not in CROP_DATA:
+            return jsonify({
+                "error": "Invalid crop selected."
+            }), 400
+
+
+        if area <= 0:
+            return jsonify({
+                "error": "Farm area must be greater than zero."
+            }), 400
+
+
+        result = calculate_prediction(
+            crop,
+            soil,
+            temperature,
+            rainfall,
+            moisture,
+            fertilizer,
+            irrigation,
+            area
+        )
+
+
+        return jsonify(result)
+
+
+    except Exception as e:
+
+        return jsonify({
+            "error": "Invalid input: " + str(e)
+        }), 400
+
+
+# RUN APPLICATION
+
+if __name__ == "__main__":
+
+    print("")
+    print("==============================================")
+    print("   AI CROP YIELD PREDICTION SYSTEM")
+    print("   Rule-Based Artificial Intelligence")
+    print("==============================================")
+    print("")
+    print("Server starting...")
+    print("Open Chrome and visit:")
+    print("http://127.0.0.1:5000")
+    print("")
+
+    app.run(debug=True)
